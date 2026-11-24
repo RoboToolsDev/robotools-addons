@@ -2,7 +2,7 @@
 ## Title: TSM Group Mail Fix
 ## Notes: Mails flagged bag items (TSM custom sources) to your alts. /gmf for commands.
 ## Author: MrSKROBOT
-## Version: 1.8.2
+## Version: 1.8.3
 ## RequiredDeps: TradeSkillMaster
 ## SavedVariables: TSMGroupMailFixDB
 

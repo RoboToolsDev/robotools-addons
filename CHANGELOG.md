@@ -2,6 +2,12 @@
 
 ## 2026-11-24
 
+**TSM Group Mail Fix 1.8.3**
+- Lighter at the mailbox: one bag scan for both buttons, and less work keeping the buttons in place.
+
+**TSM Craft Links 1.2.2**
+- Small cleanup, no changes you'll notice.
+
 **TSM Group Mail Fix 1.8.2**
 - Scans the reagent bag too, so reagents like Raw Rockscale Cod get mailed.
 - Profiles follow realm and faction, with a setup window the first time you log in on a new one.

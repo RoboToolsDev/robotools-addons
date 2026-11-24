@@ -2,7 +2,7 @@
 ## Title: TSM Craft Links
 ## Notes: Adds a Link Mats button to TSM's Crafting window: posts the mats for a queued craft to your current chat.
 ## Author: MrSKROBOT
-## Version: 1.2.1
+## Version: 1.2.2
 ## RequiredDeps: TradeSkillMaster
 
 TSMCraftLinks.lua

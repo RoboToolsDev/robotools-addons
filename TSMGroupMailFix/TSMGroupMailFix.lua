@@ -48,17 +48,27 @@ end
 
 -- Same as TSM v4.15.9 (LibTSMWoW/Source/Util/SessionInfo.lua): on Forever the
 -- "realm" is always the ruleset name and GetRealmName() is never used.
+-- Cached: the ruleset can't change mid-session, and Profile() asks for it constantly.
+-- First call is at PLAYER_LOGIN (MigrateSchema), when the game rules are ready.
+local cachedRealm
 local function RealmName()
-  if IsForever() then
-    local isRP = C_GameRules.IsGameRuleActive(Enum.GameRule.RPRuleset)
-    local isPvP = C_GameRules.IsGameRuleActive(Enum.GameRule.PvPRuleset)
-    if C_GameRules.IsGameRuleActive(Enum.GameRule.HardcoreRuleset) then return "Hardcore"
-    elseif isRP and isPvP then return "Roleplay PvP"
-    elseif isRP then return "Roleplay"
-    elseif isPvP then return "PvP"
-    else return "Normal" end
+  if not cachedRealm then
+    local name
+    if IsForever() then
+      local isRP = C_GameRules.IsGameRuleActive(Enum.GameRule.RPRuleset)
+      local isPvP = C_GameRules.IsGameRuleActive(Enum.GameRule.PvPRuleset)
+      if C_GameRules.IsGameRuleActive(Enum.GameRule.HardcoreRuleset) then name = "Hardcore"
+      elseif isRP and isPvP then name = "Roleplay PvP"
+      elseif isRP then name = "Roleplay"
+      elseif isPvP then name = "PvP"
+      else name = "Normal" end
+    else
+      name = GetRealmName()
+    end
+    if not name or name == "" then return "?" end -- not ready yet, don't cache
+    cachedRealm = name
   end
-  return GetRealmName() or "?"
+  return cachedRealm
 end
 
 -- TSM's factionrealm format: "Horde - Roleplay PvP". Display only.
@@ -303,21 +313,38 @@ local function LastBag()
   return NUM_BAG_SLOTS + reagent
 end
 
--- Every unbound, unlocked bag slot whose flag is 1 and passes the group rules
-local function Collect(kind)
-  local list, flag, profile = {}, GetFlag(kind), Profile()
+-- Every unbound, unlocked bag slot whose flag is 1 and passes the group rules.
+-- One pass over the bags for all the given kinds: lists[kind.key] = { {bag, slot, link, count}, ... }
+local function Scan(kinds)
+  local lists, flags, profile = {}, {}, Profile()
+  for _, kind in ipairs(kinds) do
+    lists[kind.key], flags[kind.key] = {}, GetFlag(kind)
+  end
   for bag = 0, LastBag() do
     for slot = 1, (GetNumSlots(bag) or 0) do
       local link, locked, bound, count = GetSlotInfo(bag, slot)
       if link and not locked and not bound then
         local itemString = ToItemString(link)
-        if itemString and IsFlagged(itemString, flag) and PassesGroupRules(itemString, profile) then
-          list[#list + 1] = { bag, slot, link = link, count = count or 1 }
+        if itemString then
+          local passes -- group rules only checked once, and only for flagged items
+          for _, kind in ipairs(kinds) do
+            if IsFlagged(itemString, flags[kind.key]) then
+              if passes == nil then passes = PassesGroupRules(itemString, profile) end
+              if passes then
+                local list = lists[kind.key]
+                list[#list + 1] = { bag, slot, link = link, count = count or 1 }
+              end
+            end
+          end
         end
       end
     end
   end
-  return list
+  return lists
+end
+
+local function Collect(kind)
+  return Scan({ kind })[kind.key]
 end
 
 -- ============================================================================
@@ -326,10 +353,11 @@ end
 
 local function Refresh()
   if not mailOpen or not bar then return end
+  local lists = Scan(KINDS)
   for _, kind in ipairs(KINDS) do
     local btn = buttons[kind.key]
     if btn then
-      btn:SetText(("Send %s (%d)"):format(kind.label, #Collect(kind)))
+      btn:SetText(("Send %s (%d)"):format(kind.label, #lists[kind.key]))
       btn:SetEnabled(not pending and GetAlt(kind) ~= nil)
     end
   end
@@ -435,8 +463,14 @@ end
 
 -- Park the buttons next to whichever mail window is showing (Blizzard's or TSM's).
 -- Runs a few times a second while the mailbox is open, since you can switch UIs.
+-- currentAnchor = false means "not placed yet" (forces the first placement).
 local currentAnchor
 local function UpdateAnchor()
+  -- Already attached to a window that's still up: nothing to do (Blizzard's wins if both show)
+  if currentAnchor and currentAnchor:IsShown()
+    and (currentAnchor == MailFrame or not MailFrame:IsShown()) then
+    return
+  end
   local target = MailFrame:IsShown() and MailFrame or FindTSMMailFrame()
   if target ~= currentAnchor then
     currentAnchor = target
@@ -446,8 +480,8 @@ local function UpdateAnchor()
       bar:SetFrameStrata(target:GetFrameStrata())
       bar:SetFrameLevel(target:GetFrameLevel() + 20)
     end
+    for _, btn in pairs(buttons) do btn:SetShown(target ~= nil) end
   end
-  for _, btn in pairs(buttons) do btn:SetShown(target ~= nil) end
 end
 
 local function CreateButtons()
@@ -811,9 +845,7 @@ local function CreateOptions()
       if row.Commit then row.Commit() end
     end
     justSaved = true
-    ReloadOptions()
-    justSaved = true
-    panel.UpdateSaveState()
+    ReloadOptions() -- also refreshes the Save state, now showing "Saved"
     Refresh()
     C_Timer.After(3, function() -- "Saved" fades back to nothing
       justSaved = false
@@ -960,7 +992,6 @@ local function CreateOptions()
     Grey(delLabel, others)
   end })
 
-
   ReloadOptions = function()
     for _, row in ipairs(rows) do row.Load() end
     panel.UpdateSaveState()
@@ -1035,7 +1066,7 @@ f:SetScript("OnEvent", function(_, event, arg1)
   elseif event == "MAIL_SHOW" then
     if not bar then CreateButtons() end
     mailOpen = true
-    currentAnchor = nil
+    currentAnchor = false
     bar:Show()
     UpdateAnchor() -- TSM's window appears a frame later; the bar's OnUpdate catches it
     Refresh()

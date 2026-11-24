@@ -48,16 +48,20 @@ local function ItemName(itemString)
   return (ok and name) or itemString
 end
 
+-- The recipe's spell name (used for enchants, which have no crafted item)
+local function RecipeName(recipe)
+  local spellID = tonumber(recipe:match("^r:(%d+)"))
+  return spellID and ((C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(spellID))
+    or (GetSpellInfo and GetSpellInfo(spellID)))
+end
+
 -- Display text for a queued craft: the crafted item's link, or the recipe's spell name (enchants)
 local function CraftLabel(q)
   if q.item then
     local ok, link = pcall(TSM_API.GetItemLink, q.item)
     if ok and link then return link end
   end
-  local spellID = tonumber(q.recipe:match("^r:(%d+)"))
-  local name = spellID and ((C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(spellID))
-    or (GetSpellInfo and GetSpellInfo(spellID)))
-  return name or q.recipe
+  return RecipeName(q.recipe) or q.recipe
 end
 
 local GetInfo = (C_Item and C_Item.GetItemInfo) or GetItemInfo
@@ -85,11 +89,7 @@ local function MessagePrefix(key, entries)
     local link, name, isLoading = ChatLink(q.item)
     label, loading = link or name, isLoading
   end
-  if not label then
-    local spellID = tonumber(q.recipe:match("^r:(%d+)"))
-    label = spellID and ((C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(spellID))
-      or (GetSpellInfo and GetSpellInfo(spellID))) or "this craft"
-  end
+  label = label or RecipeName(q.recipe) or "this craft"
   local count = q.num > 1 and ("x" .. q.num) or ""
   return "Mats for " .. label .. count .. ": ", loading
 end
@@ -352,7 +352,7 @@ local function CreatePopup()
 
   local title = popup:CreateFontString(nil, "ARTWORK", "GameFontNormal")
   title:SetPoint("TOPLEFT", 12, -10)
-  title:SetText("Link mats to chat")
+  title:SetText("Link mats (full list for the queued amount)")
 
   local close = CreateFrame("Button", nil, popup, "UIPanelCloseButton")
   close:SetPoint("TOPRIGHT", 0, 0)
@@ -362,7 +362,6 @@ local function CreatePopup()
   sub:SetPoint("RIGHT", popup, "RIGHT", -12, 0)
   sub:SetJustifyH("LEFT")
   popup.sub = sub
-  title:SetText("Link mats (full list for the queued amount)")
 
   statusText = popup:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
   statusText:SetPoint("BOTTOMLEFT", 12, 12)
@@ -424,13 +423,12 @@ end
 
 local f = CreateFrame("Frame")
 f:RegisterEvent("PLAYER_LOGIN")
-f:SetScript("OnEvent", function()
-  do
-    CreatePopup()
-    CreateButton()
-    local ok, err = pcall(TSM_API.RegisterUICallback, "CRAFTING", "TSMCraftLinks:LinkMatsButton", OnCraftingUI)
-    if not ok then Print("Couldn't attach to TSM's Crafting window: " .. tostring(err)) end
-  end
+f:SetScript("OnEvent", function(self)
+  self:UnregisterEvent("PLAYER_LOGIN") -- one-time setup
+  CreatePopup()
+  CreateButton()
+  local ok, err = pcall(TSM_API.RegisterUICallback, "CRAFTING", "TSMCraftLinks:LinkMatsButton", OnCraftingUI)
+  if not ok then Print("Couldn't attach to TSM's Crafting window: " .. tostring(err)) end
 end)
 
 SLASH_TSMCRAFTLINKS1 = "/tcl"
