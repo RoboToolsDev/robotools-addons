@@ -27,4 +27,8 @@ Small World of Warcraft addons and fixes for **WoW Forever**. The current ones w
 - One hardware click per mail and per chat post; nothing is sent automatically, per Blizzard's addon rules.
 - The flag sources come from the TSM custom sources in the full setup guide; any TSM source that returns 1 works.
 
+## Found a bug?
+
+[Report it here](https://github.com/RoboToolsDev/robotools-addons/issues/new/choose) (free GitHub account needed). A screenshot helps a lot.
+
 Made by MrSKROBOT, with help from Tobor (Claude).

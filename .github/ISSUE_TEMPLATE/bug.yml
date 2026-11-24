@@ -1,0 +1,41 @@
+name: Report a bug
+description: Something in TSM Group Mail Fix or TSM Craft Links isn't working right.
+title: "Bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for reporting! A screenshot is the most helpful thing you can add.
+  - type: dropdown
+    id: addon
+    attributes:
+      label: Which addon?
+      options:
+        - TSM Group Mail Fix
+        - TSM Craft Links
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: error
+    attributes:
+      label: Error message
+      description: If WoW showed a Lua error, paste it here. Turn errors on with /console scriptErrors 1
+      render: text
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: Drag images in here.
+  - type: input
+    id: version
+    attributes:
+      label: Addon version
+      description: Shown in the AddOns list on the character screen (hover the addon). Leave blank if unsure.
