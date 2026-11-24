@@ -1,6 +1,6 @@
-# RoboTools TSM Addons
+# RoboTools Addons
 
-Two small World of Warcraft addons for **WoW Forever** that work alongside [TradeSkillMaster](https://tradeskillmaster.com/) (TSM 4.15+). Both need TSM installed.
+Small World of Warcraft addons and fixes for **WoW Forever**. The current ones work alongside [TradeSkillMaster](https://tradeskillmaster.com/) (TSM 4.15+) and need TSM installed.
 
 | Addon | Version | What it does |
 | --- | --- | --- |
@@ -10,7 +10,7 @@ Two small World of Warcraft addons for **WoW Forever** that work alongside [Trad
 ## Install
 
 1. Close WoW.
-2. Download the **[TSM Addons folder](https://drive.google.com/drive/folders/1A6f2IFsPDtPOCGIdeDhAtpYZ0bZHTMAD)** from Google Drive (download arrow at the top) and extract the zip.
+2. Download the **[RoboTools Addons folder](https://drive.google.com/drive/folders/1A6f2IFsPDtPOCGIdeDhAtpYZ0bZHTMAD)** from Google Drive (download arrow at the top) and extract the zip.
 3. Copy the `TSMGroupMailFix` and `TSMCraftLinks` folders into
    `C:\Program Files (x86)\World of Warcraft\_forever_\Interface\AddOns\`.
    Delete older versions of those folders first.
