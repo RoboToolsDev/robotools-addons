@@ -31,4 +31,4 @@ Small World of Warcraft addons and fixes for **WoW Forever**. The current ones w
 
 [Report it here](https://github.com/RoboToolsDev/robotools-addons/issues/new/choose) (free GitHub account needed). A screenshot helps a lot.
 
-Made by MrSKROBOT, with help from Tobor (Claude).
+Made by MrSKRobot, with assistance by Tobor (Claude).
