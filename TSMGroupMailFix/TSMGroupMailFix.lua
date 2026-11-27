@@ -18,6 +18,7 @@ local KINDS = {
 local DEFAULT_DNM_GROUPS = { "DNS" }
 
 local buttons, pending = {}, false
+local Refresh -- mailbox buttons + item list; defined with the mailbox code
 local bar, mailOpen = nil, false -- bar holds the Send buttons; follows whichever mail UI is showing
 local settingsCategory, optionsPanel, minimapIcon
 local ReloadOptions -- set once the panel exists
@@ -286,16 +287,19 @@ local function ToItemString(link)
   return id and ("i:" .. id)
 end
 
--- False if the item is in a Do Not Mail group (or a subgroup of one),
--- or is ungrouped while "Skip ungrouped items" is on.
+-- False, "dnm" if the item is in a Do Not Mail group (or a subgroup of one);
+-- false, "ungrouped" if it's in no group while "Skip ungrouped items" is on.
 -- TSM group paths use ` between levels, e.g. "Farming`DNS"
 local function PassesGroupRules(itemString, profile)
   local ok, path = pcall(TSM_API.GetGroupPathByItem, itemString)
   if not ok then path = nil end
-  if not path then return not profile.skipUngrouped end
+  if not path then
+    if profile.skipUngrouped then return false, "ungrouped" end
+    return true
+  end
   for level in path:gmatch("[^`]+") do
     for _, dnm in ipairs(profile.dnmGroups) do
-      if level == dnm then return false end
+      if level == dnm then return false, "dnm" end
     end
   end
   return true
@@ -313,12 +317,28 @@ local function LastBag()
   return NUM_BAG_SLOTS + reagent
 end
 
--- Every unbound, unlocked bag slot whose flag is 1 and passes the group rules.
--- One pass over the bags for all the given kinds: lists[kind.key] = { {bag, slot, link, count}, ... }
+-- Items unticked in the mailbox list: unticked[kind.key][itemString] = true.
+-- Not saved: cleared every time the mailbox opens (and by /reload).
+local unticked = {}
+
+local function IsTicked(kind, itemString)
+  return not (unticked[kind.key] and unticked[kind.key][itemString])
+end
+
+local function SetTicked(kind, itemString, on)
+  unticked[kind.key] = unticked[kind.key] or {}
+  unticked[kind.key][itemString] = (not on) or nil
+end
+
+-- Every unbound, unlocked bag slot whose flag is 1, in one pass over the bags for all the given kinds.
+--   lists[kind.key] = { {bag, slot, link, count, item, ticked}, ... }  (passes the group rules)
+--   ungrouped[kind.key] = same shape: flagged, but held back by "Skip ungrouped items"
+--   numUngrouped = bag slots held back that way (a slot flagged for both kinds counts once)
 local function Scan(kinds)
-  local lists, flags, profile = {}, {}, Profile()
+  local lists, ungrouped, flags, profile = {}, {}, {}, Profile()
+  local numUngrouped = 0
   for _, kind in ipairs(kinds) do
-    lists[kind.key], flags[kind.key] = {}, GetFlag(kind)
+    lists[kind.key], ungrouped[kind.key], flags[kind.key] = {}, {}, GetFlag(kind)
   end
   for bag = 0, LastBag() do
     for slot = 1, (GetNumSlots(bag) or 0) do
@@ -326,13 +346,19 @@ local function Scan(kinds)
       if link and not locked and not bound then
         local itemString = ToItemString(link)
         if itemString then
-          local passes -- group rules only checked once, and only for flagged items
+          local passes, why -- group rules only checked once, and only for flagged items
           for _, kind in ipairs(kinds) do
             if IsFlagged(itemString, flags[kind.key]) then
-              if passes == nil then passes = PassesGroupRules(itemString, profile) end
+              if passes == nil then
+                passes, why = PassesGroupRules(itemString, profile)
+                if why == "ungrouped" then numUngrouped = numUngrouped + 1 end
+              end
+              local entry = { bag, slot, link = link, count = count or 1, item = itemString }
               if passes then
-                local list = lists[kind.key]
-                list[#list + 1] = { bag, slot, link = link, count = count or 1 }
+                entry.ticked = IsTicked(kind, itemString)
+                lists[kind.key][#lists[kind.key] + 1] = entry
+              elseif why == "ungrouped" then
+                ungrouped[kind.key][#ungrouped[kind.key] + 1] = entry
               end
             end
           end
@@ -340,27 +366,247 @@ local function Scan(kinds)
       end
     end
   end
-  return lists
+  return lists, ungrouped, numUngrouped
 end
 
+local function Ticked(list)
+  local out = {}
+  for _, e in ipairs(list) do
+    if e.ticked then out[#out + 1] = e end
+  end
+  return out
+end
+
+-- What a click on this kind's button would mail (ticked items only), plus the full flagged list
 local function Collect(kind)
-  return Scan({ kind })[kind.key]
+  local all = Scan({ kind })[kind.key]
+  return Ticked(all), all
 end
 
 -- ============================================================================
 -- Mailbox buttons
 -- ============================================================================
 
-local function Refresh()
+local BACKDROP_TEMPLATE = BackdropTemplateMixin and "BackdropTemplate" or nil
+local PICK_W, ROW_H, HEAD_H, PICK_MAX_H = 260, 20, 18, 300
+local content, picker, ungroupedBox -- built in CreateButtons
+
+local function SetBox(frame, bg, border)
+  if not frame.SetBackdrop then return end
+  frame:SetBackdrop({
+    bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+    edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+    edgeSize = 12,
+    insets = { left = 3, right = 3, top = 3, bottom = 3 },
+  })
+  frame:SetBackdropColor(bg[1], bg[2], bg[3], bg[4])
+  frame:SetBackdropBorderColor(border[1], border[2], border[3])
+end
+
+local function ItemIcon(link)
+  if C_Item and C_Item.GetItemIconByID then return C_Item.GetItemIconByID(link) end
+  if GetItemIcon then return GetItemIcon(link) end
+end
+
+-- Flagged items for each kind, one line per item (stacks added up), in bag order
+local function GroupByItem(list)
+  local order, byItem = {}, {}
+  for _, e in ipairs(list) do
+    local g = byItem[e.item]
+    if not g then
+      g = { item = e.item, link = e.link, count = 0, stacks = 0, ticked = e.ticked }
+      byItem[e.item] = g
+      order[#order + 1] = g
+    end
+    g.count = g.count + e.count
+    g.stacks = g.stacks + 1
+  end
+  return order
+end
+
+local function PickerRow(i)
+  local row = picker.rows[i]
+  if row then return row end
+  row = CreateFrame("Button", nil, picker.child)
+  row:SetSize(PICK_W - 40, ROW_H)
+  row.check = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
+  row.check:SetSize(20, 20)
+  row.check:SetPoint("LEFT", 0, 0)
+  row.icon = row:CreateTexture(nil, "ARTWORK")
+  row.icon:SetSize(16, 16)
+  row.icon:SetPoint("LEFT", row.check, "RIGHT", 2, 0)
+  row.text = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+  row.text:SetPoint("LEFT", row.icon, "RIGHT", 4, 0)
+  row.text:SetPoint("RIGHT", row, "RIGHT", 0, 0)
+  row.text:SetJustifyH("LEFT")
+  row.text:SetWordWrap(false)
+  row.check:SetScript("OnClick", function(self)
+    SetTicked(row.kind, row.data.item, self:GetChecked() and true or false)
+    Refresh()
+  end)
+  row:SetScript("OnClick", function() row.check:Click() end)
+  row:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:SetHyperlink(self.data.link)
+    GameTooltip:Show()
+  end)
+  row:SetScript("OnLeave", GameTooltip_Hide)
+  picker.rows[i] = row
+  return row
+end
+
+local function PickerHeader(i)
+  local fs = picker.headers[i]
+  if not fs then
+    fs = picker.child:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+    fs:SetJustifyH("LEFT")
+    picker.headers[i] = fs
+  end
+  return fs
+end
+
+-- The tick-box list under the Send buttons. Hidden when nothing is flagged.
+local function UpdatePicker(lists)
+  local y, nRows, nHeads, allTicked, any = 0, 0, 0, true, false
+  for _, kind in ipairs(KINDS) do
+    local items = GroupByItem(lists[kind.key])
+    if #items > 0 then
+      any = true
+      nHeads = nHeads + 1
+      local head = PickerHeader(nHeads)
+      head:ClearAllPoints()
+      head:SetPoint("TOPLEFT", picker.child, "TOPLEFT", 2, -y - 4)
+      head:SetText(("%s to %s"):format(kind.label, GetAlt(kind) or "|cffff6666no alt set|r"))
+      head:Show()
+      y = y + HEAD_H
+      for _, g in ipairs(items) do
+        nRows = nRows + 1
+        local row = PickerRow(nRows)
+        row.kind, row.data = kind, g
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", picker.child, "TOPLEFT", 0, -y)
+        row.check:SetChecked(g.ticked)
+        row.icon:SetTexture(ItemIcon(g.link))
+        local stacks = g.stacks > 1 and (" |cff888888(%d stacks)|r"):format(g.stacks) or ""
+        row.text:SetText(("%s x%d%s"):format(g.link, g.count, stacks))
+        row.text:SetAlpha(g.ticked and 1 or 0.45)
+        row:Show()
+        if not g.ticked then allTicked = false end
+        y = y + ROW_H
+      end
+    end
+  end
+  for i = nRows + 1, #picker.rows do picker.rows[i]:Hide() end
+  for i = nHeads + 1, #picker.headers do picker.headers[i]:Hide() end
+  if not any then picker:Hide() return end
+  picker.child:SetHeight(math.max(y, 1))
+  picker:SetHeight(math.min(y, PICK_MAX_H) + 40)
+  picker.all:SetChecked(allTicked)
+  picker:Show()
+end
+
+local function CreatePicker(parent)
+  picker = CreateFrame("Frame", nil, parent, BACKDROP_TEMPLATE)
+  picker:SetWidth(PICK_W)
+  SetBox(picker, { 0, 0, 0, 0.85 }, { 0.6, 0.6, 0.6 })
+  picker:EnableMouse(true)
+
+  local all = CreateFrame("CheckButton", nil, picker, "UICheckButtonTemplate")
+  all:SetSize(22, 22)
+  all:SetPoint("TOPLEFT", 8, -6)
+  local allText = picker:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+  allText:SetPoint("LEFT", all, "RIGHT", 2, 0)
+  allText:SetText("Select all")
+  -- Ticks or unticks everything in the list, both buttons
+  all:SetScript("OnClick", function(self)
+    local on = self:GetChecked() and true or false
+    local lists = Scan(KINDS)
+    for _, kind in ipairs(KINDS) do
+      for _, e in ipairs(lists[kind.key]) do SetTicked(kind, e.item, on) end
+    end
+    Refresh()
+  end)
+
+  local scroll = CreateFrame("ScrollFrame", nil, picker, "UIPanelScrollFrameTemplate")
+  scroll:SetPoint("TOPLEFT", all, "BOTTOMLEFT", 0, -2)
+  scroll:SetPoint("BOTTOMRIGHT", picker, "BOTTOMRIGHT", -28, 8)
+  local child = CreateFrame("Frame", nil, scroll)
+  child:SetSize(PICK_W - 40, 1)
+  scroll:SetScrollChild(child)
+
+  picker.all, picker.child, picker.rows, picker.headers = all, child, {}, {}
+  picker:Hide()
+end
+
+-- Info box (not a button): flagged items held back by "Skip ungrouped items"
+local function AddUngroupedTooltip(tt)
+  local _, ungrouped, n = Scan(KINDS)
+  tt:AddLine("Ungrouped items in bags", 0.55, 0.8, 1)
+  if n == 0 then
+    tt:AddLine("Nothing flagged is being held back.", 0.7, 0.7, 0.7)
+  end
+  for _, kind in ipairs(KINDS) do
+    local items = GroupByItem(ungrouped[kind.key])
+    if #items > 0 then
+      tt:AddLine(" ")
+      tt:AddLine(("Would go to %s (%s):"):format(kind.label, GetAlt(kind) or "no alt set"), 1, 0.82, 0)
+      for _, g in ipairs(items) do
+        local stacks = g.stacks > 1 and (" |cff888888(%d stacks)|r"):format(g.stacks) or ""
+        tt:AddLine(("%s x%d%s"):format(g.link, g.count, stacks), 1, 1, 1)
+      end
+    end
+  end
+  tt:AddLine(" ")
+  tt:AddLine("Not mailed because \"Skip ungrouped items\" is on. Put them in a TSM group, " ..
+    "or turn it off with /gmf ungrouped off.", 0.6, 0.6, 0.6, true)
+end
+
+local function CreateUngroupedBox(parent)
+  ungroupedBox = CreateFrame("Frame", nil, parent, BACKDROP_TEMPLATE)
+  ungroupedBox:SetSize(120, 22)
+  SetBox(ungroupedBox, { 0.05, 0.12, 0.2, 0.9 }, { 0.3, 0.55, 0.8 })
+  ungroupedBox.text = ungroupedBox:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+  ungroupedBox.text:SetPoint("CENTER")
+  ungroupedBox:EnableMouse(true)
+  ungroupedBox:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    AddUngroupedTooltip(GameTooltip)
+    GameTooltip:Show()
+  end)
+  ungroupedBox:SetScript("OnLeave", GameTooltip_Hide)
+  ungroupedBox:Hide()
+end
+
+Refresh = function()
   if not mailOpen or not bar then return end
-  local lists = Scan(KINDS)
+  local lists, _, numUngrouped = Scan(KINDS)
   for _, kind in ipairs(KINDS) do
     local btn = buttons[kind.key]
     if btn then
-      btn:SetText(("Send %s (%d)"):format(kind.label, #lists[kind.key]))
+      btn:SetText(("Send %s (%d)"):format(kind.label, #Ticked(lists[kind.key])))
       btn:SetEnabled(not pending and GetAlt(kind) ~= nil)
     end
   end
+
+  -- Stack below the buttons: ungrouped info box (only while the option is on), then the list
+  local below = buttons[KINDS[#KINDS].key]
+  if Profile().skipUngrouped then
+    ungroupedBox:ClearAllPoints()
+    ungroupedBox:SetPoint("TOPLEFT", below, "BOTTOMLEFT", 0, -4)
+    ungroupedBox.text:SetText(("Ungrouped (%d)"):format(numUngrouped))
+    if numUngrouped > 0 then
+      ungroupedBox.text:SetTextColor(0.55, 0.8, 1)
+    else
+      ungroupedBox.text:SetTextColor(0.5, 0.5, 0.5)
+    end
+    ungroupedBox:Show()
+    below = ungroupedBox
+  else
+    ungroupedBox:Hide()
+  end
+  picker:ClearAllPoints()
+  picker:SetPoint("TOPLEFT", below, "BOTTOMLEFT", 0, -6)
+  UpdatePicker(lists)
 end
 
 local function ShowSendTab()
@@ -391,9 +637,9 @@ local function SendBatch(kind)
     end
   end
 
-  local list = Collect(kind)
+  local list, all = Collect(kind)
   if #list == 0 then
-    Print("Nothing flagged for " .. kind.label .. ".")
+    Print(#all > 0 and ("Nothing ticked for " .. kind.label .. ".") or ("Nothing flagged for " .. kind.label .. "."))
     return
   end
 
@@ -423,9 +669,10 @@ local function SendBatch(kind)
 end
 
 -- Tooltip list of what the next click mails (first MAX_ATTACH stacks), grouped by item
-local function AddSendPreview(tt, list)
+local function AddSendPreview(tt, list, all)
+  local skipped = #all - #list
   if #list == 0 then
-    tt:AddLine("Nothing flagged in your bags.", 0.7, 0.7, 0.7)
+    tt:AddLine(skipped > 0 and "Everything flagged is unticked." or "Nothing flagged in your bags.", 0.7, 0.7, 0.7)
     return
   end
   local batch = math.min(#list, MAX_ATTACH)
@@ -444,6 +691,9 @@ local function AddSendPreview(tt, list)
   local left = #list - batch
   if left > 0 then
     tt:AddLine(("+%d more stacks on the next click(s)"):format(left), 0.7, 0.7, 0.7)
+  end
+  if skipped > 0 then
+    tt:AddLine(("%d unticked stacks stay in your bags"):format(skipped), 0.7, 0.7, 0.7)
   end
 end
 
@@ -480,7 +730,7 @@ local function UpdateAnchor()
       bar:SetFrameStrata(target:GetFrameStrata())
       bar:SetFrameLevel(target:GetFrameLevel() + 20)
     end
-    for _, btn in pairs(buttons) do btn:SetShown(target ~= nil) end
+    content:SetShown(target ~= nil)
   end
 end
 
@@ -488,6 +738,9 @@ local function CreateButtons()
   bar = CreateFrame("Frame", nil, UIParent)
   bar:SetSize(120, 22 * #KINDS + 4 * (#KINDS - 1))
   bar:Hide()
+  content = CreateFrame("Frame", nil, bar) -- buttons, info box and list; hidden while no mail window shows
+  content:SetAllPoints()
+  content:Hide()
   local elapsed = 0
   bar:SetScript("OnUpdate", function(_, dt)
     elapsed = elapsed + dt
@@ -498,7 +751,7 @@ local function CreateButtons()
 
   local prev
   for _, kind in ipairs(KINDS) do
-    local btn = CreateFrame("Button", nil, bar, "UIPanelButtonTemplate")
+    local btn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
     btn:SetSize(120, 22)
     if prev then
       btn:SetPoint("TOPLEFT", prev, "BOTTOMLEFT", 0, -4)
@@ -518,6 +771,8 @@ local function CreateButtons()
     buttons[kind.key] = btn
     prev = btn
   end
+  CreateUngroupedBox(content)
+  CreatePicker(content)
 end
 
 -- ============================================================================
@@ -814,7 +1069,8 @@ local function CreateOptions()
   desc:SetText("Adds Send buttons to the mailbox. Each click mails up to " .. MAX_ATTACH ..
     " bag items whose TSM flag source returns 1 to that button's alt. Soulbound items are never sent. " ..
     "Type in a box, then click Save at the bottom (or press Enter to save just that box). " ..
-    "Esc undoes typing; checkboxes and profile changes save instantly.")
+    "Esc undoes typing; checkboxes and profile changes save instantly. " ..
+    "At the mailbox, untick items in the list to keep them out of the mail until you close the mailbox.")
 
   -- Save button + state text
   local saveBtn = SmallButton(outer, "Save", 90)
@@ -1066,6 +1322,7 @@ f:SetScript("OnEvent", function(_, event, arg1)
   elseif event == "MAIL_SHOW" then
     if not bar then CreateButtons() end
     mailOpen = true
+    unticked = {} -- every flagged item starts ticked again
     currentAnchor = false
     bar:Show()
     UpdateAnchor() -- TSM's window appears a frame later; the bar's OnUpdate catches it
