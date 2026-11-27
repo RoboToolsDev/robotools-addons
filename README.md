@@ -4,7 +4,7 @@ Small World of Warcraft addons and fixes for **WoW Forever**. The current ones w
 
 | Addon | Version | What it does |
 | --- | --- | --- |
-| **TSM Group Mail Fix** | 1.8.3 | Adds Send AH and Send DE buttons to the mailbox (Blizzard's or TSM's). Each click mails up to 12 bag items that your TSM flag sources (`zpostaucnow`, `zdenow` by default) mark, to your AH or DE alt. Hover a button to see what's going out. Skips soulbound items and anything in a Do Not Mail group. |
+| **TSM Group Mail Fix** | 1.9.0 | Adds Send AH and Send DE buttons to the mailbox (Blizzard's or TSM's). Each click mails up to 12 bag items that your TSM flag sources (`zpostaucnow`, `zdenow` by default) mark, to your AH or DE alt. Hover a button to see what's going out. Skips soulbound items and anything in a Do Not Mail group. |
 | **TSM Craft Links** | 1.2.2 | Adds a Link Mats button above TSM's Crafting window. Click a queued craft and it posts `Mats for [Item]x3: [Mat]x2, ...` to whatever chat you're in. Shift-click drops it in the chat box instead. |
 
 ## Install
