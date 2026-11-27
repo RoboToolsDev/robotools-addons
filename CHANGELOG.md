@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-27
+
+**TSM Group Mail Fix 1.9.0**
+- New tick-box list under the Send buttons: one row per item, split by AH / DE, all ticked to start. Untick anything you want to keep and it's left out of the mail. Everything ticks again next time you open the mailbox.
+- With "Skip ungrouped items" on, a blue Ungrouped (N) box shows how many items are being held back. Hover it to see which ones and how to fix it.
+
 ## 2026-11-24
 
 **TSM Group Mail Fix 1.8.3**
